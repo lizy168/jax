@@ -1457,7 +1457,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, ft_in, ft_out,
   return [*init_avals, *y_avals], core.positional_effects(jaxpr)
 
 def _scan_state_partial_discharge_rule(
-    should_discharge, in_avals, out_avals, *args, jaxpr, ft_in, ft_out,
+    should_discharge, ctx, *args, jaxpr, ft_in, ft_out,
     unroll, reverse, length):
   # jaxpr: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys]
   # jaxpr_: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys, *ref_outs]
@@ -2280,13 +2280,12 @@ def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
         f'Effects not supported in `while`: {disallowed_effects}')
   return body_jaxpr.out_avals, joined_effects
 
-def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
+def _while_partial_discharge_rule(should_discharge, ctx, *args,
     cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts):
-  del out_avals
   cond_consts_discharge, body_consts_discharge, carry_discharge = split_list(
       should_discharge, [cond_nconsts, body_nconsts])
   cond_consts, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
-  cond_consts_avals, body_consts_avals, carry_avals = split_list(in_avals,
+  cond_consts_avals, body_consts_avals, carry_avals = split_list(ctx.in_avals,
                                                                  [cond_nconsts,
                                                                   body_nconsts])
 
@@ -2330,7 +2329,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
                                   *remaining_body_const_avals]
     num_remaining_body_consts += num_remaining_cond_consts
 
-  num_carry = len(in_avals) - body_nconsts - cond_nconsts
+  num_carry = len(ctx.in_avals) - body_nconsts - cond_nconsts
   if body_jaxpr.consts:
     raise NotImplementedError("Body jaxpr has consts. If you see this error, "
                               "please open an issue at "
@@ -2393,10 +2392,18 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
 
   new_body_jaxpr, _ = pe.trace_to_jaxpr(
       new_body,
-      ft.flatten_args(*remaining_body_const_avals,
-          *[a.inner_aval for a in body_ref_avals],
-          *[a.inner_aval for a in cond_ref_avals],
-          *carry_avals),
+      ft.flatten_args(
+          *remaining_body_const_avals,
+          *[
+              state_discharge.discharged_aval(
+                  a,
+                  discharge=True,
+                  strip_memory_space=ctx.strip_memory_space,
+              )
+              for a in body_ref_avals + cond_ref_avals
+          ],
+          *carry_avals,
+      ),
       debug_info=discharged_body_jaxpr.debug_info)
   if new_body_jaxpr.consts: raise NotImplementedError
 
@@ -2421,11 +2428,28 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
 
   new_cond_jaxpr, _ = pe.trace_to_jaxpr(
       new_cond,
-      ft.flatten_args(*remaining_cond_const_avals,
-          *[a.inner_aval for a in body_ref_avals],
-          *[a.inner_aval for a in cond_ref_avals],
-          *carry_avals),
-      debug_info=cond_jaxpr.debug_info.with_unknown_names())
+      ft.flatten_args(
+          *remaining_cond_const_avals,
+          *[
+              state_discharge.discharged_aval(
+                  a,
+                  discharge=True,
+                  strip_memory_space=ctx.strip_memory_space,
+              )
+              for a in body_ref_avals
+          ],
+          *[
+              state_discharge.discharged_aval(
+                  a,
+                  discharge=True,
+                  strip_memory_space=ctx.strip_memory_space,
+              )
+              for a in cond_ref_avals
+          ],
+          *carry_avals,
+      ),
+      debug_info=cond_jaxpr.debug_info.with_unknown_names(),
+  )
   if new_cond_jaxpr.consts: raise NotImplementedError
 
   out = while_p.bind(*remaining_cond_consts, *remaining_body_consts,
