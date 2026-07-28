@@ -718,12 +718,6 @@ def TPU_UnpackElementwiseOp : TPU_Op<"unpack_elementwise", [Pure, ElementwiseMap
   let hasVerifier = 1;
 }
 
-def TPU_RelayoutOp : TPU_Op<"relayout", [Pure, SameOperandsAndResultType]> {
-  let arguments = (ins AnyVectorOfAnyRank:$input);
-  let results = (outs AnyVectorOfAnyRank:$output);
-  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
-  let hasVerifier = 1;
-}
 
 def TPU_PackMaskOp : TPU_Op<"pack_vmsk", [Pure, SameTypeOperands]> {
   let description = [{
